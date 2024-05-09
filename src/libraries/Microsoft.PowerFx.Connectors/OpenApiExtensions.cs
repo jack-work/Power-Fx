@@ -10,6 +10,7 @@ using System.Net.Http;
 using Microsoft.OpenApi.Any;
 using Microsoft.OpenApi.Interfaces;
 using Microsoft.OpenApi.Models;
+using Microsoft.PowerFx.Connectors.Tabular;
 using Microsoft.PowerFx.Core.IR;
 using Microsoft.PowerFx.Core.Utils;
 using Microsoft.PowerFx.Types;
@@ -568,7 +569,20 @@ namespace Microsoft.PowerFx.Connectors
                             }
 
                             string propLogicalName = kv.Key;
-                            string propDisplayName = GetDisplayName(kv.Key);
+                            string propDisplayName = kv.Value.Title;
+
+                            if (string.IsNullOrEmpty(propDisplayName))
+                            {
+                                propDisplayName = kv.Value.GetSummary();
+                            }
+
+                            if (string.IsNullOrEmpty(propDisplayName))
+                            {
+                                propDisplayName = kv.Key;
+                            }
+                            
+                            propDisplayName = GetDisplayName(propDisplayName);                                    
+
                             string schemaIdentifier = GetUniqueIdentifier(kv.Value);
 
                             if (schemaIdentifier.StartsWith("R:", StringComparison.Ordinal) && settings.Chain.Contains(schemaIdentifier))
@@ -582,18 +596,18 @@ namespace Microsoft.PowerFx.Connectors
 
                             if (propertyType.HiddenRecordType != null)
                             {
-                                hiddenRecordType = (hiddenRecordType ?? RecordType.Empty()).Add(propLogicalName, propertyType.HiddenRecordType, propDisplayName);
+                                hiddenRecordType = (hiddenRecordType ?? RecordType.Empty()).SafeAdd(propLogicalName, propertyType.HiddenRecordType, propDisplayName);
                                 hiddenConnectorTypes.Add(propertyType); // Hidden
                             }
 
                             if (hiddenRequired)
                             {
-                                hiddenRecordType = (hiddenRecordType ?? RecordType.Empty()).Add(propLogicalName, propertyType.FormulaType, propDisplayName);
+                                hiddenRecordType = (hiddenRecordType ?? RecordType.Empty()).SafeAdd(propLogicalName, propertyType.FormulaType, propDisplayName);
                                 hiddenConnectorTypes.Add(propertyType);
                             }
                             else
                             {
-                                recordType = recordType.Add(propLogicalName, propertyType.FormulaType, propDisplayName);
+                                recordType = recordType.SafeAdd(propLogicalName, propertyType.FormulaType, propDisplayName);
                                 connectorTypes.Add(propertyType);
                             }
                         }
@@ -607,6 +621,22 @@ namespace Microsoft.PowerFx.Connectors
                 default:
                     return new ConnectorType(error: $"Unsupported schema type {schema.Type}");
             }
+        }
+
+        internal static RecordType SafeAdd(this RecordType recordType, string logicalName, FormulaType formulaType, string displayName)
+        {
+            int i = 0;
+            string displayName2 = displayName;
+
+            if (displayName2 != null)
+            {
+                while (recordType._type.DisplayNameProvider?.TryGetLogicalName(new DName(displayName2), out _) == true)
+                {
+                    displayName2 = $"{displayName}_{++i}";
+                }
+            }
+
+            return recordType.Add(logicalName, formulaType, displayName2);
         }
 
         internal static string GetDisplayName(string name)
@@ -778,6 +808,26 @@ namespace Microsoft.PowerFx.Connectors
         internal static bool GetExplicitInput(this IOpenApiExtensible param)
         {
             return param.Extensions != null && param.Extensions.TryGetValue(XMsExplicitInput, out IOpenApiExtension ext) && ext is OpenApiBoolean apiBool && apiBool.Value;
+        }
+
+        internal static ServiceCapabilities GetTableCapabilities(this IOpenApiExtensible schema)
+        {
+            if (schema.Extensions != null && schema.Extensions.TryGetValue(XMsCapabilities, out IOpenApiExtension ext))
+            {                
+                return ServiceCapabilities.ParseTableCapabilities(ext as OpenApiObject);
+            }
+
+            return null;
+        }
+
+        internal static ColumnCapabilities GetColumnCapabilities(this IOpenApiExtensible schema)
+        {
+            if (schema.Extensions != null && schema.Extensions.TryGetValue(XMsCapabilities, out IOpenApiExtension ext))
+            {
+                return ColumnCapabilities.ParseColumnCapabilities(ext as OpenApiObject);
+            }
+
+            return null;
         }
 
         // Get string content of x-ms-url-encoding parameter extension
